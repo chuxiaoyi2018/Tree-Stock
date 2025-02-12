@@ -353,13 +353,30 @@ def export_split_rules_to_csv(model, feature_names, output_path='leaf_rules.csv'
                 })
                 return
             
-            # 添加当前分裂规则
-            new_rule = f"{node['feature']} {node['op']} {node['threshold']}"
-            new_path = path + [new_rule]
+            # 处理分裂节点，生成不同分支的条件
+            feature = node['feature']
+            threshold = node['threshold']
+            op = node['op']
             
-            # 递归遍历分支
-            dfs(node['yes'], new_path, current_gain + node['gain'], current_cover + node['cover'])
-            dfs(node['no'], new_path, current_gain + node['gain'], current_cover + node['cover'])
+            # 生成yes分支条件（原条件）
+            yes_rule = f"{feature} {op} {threshold}"
+            # 生成no分支条件（取反）
+            if op == '<':
+                no_rule = f"{feature} >= {threshold}"
+            elif op == '<=':
+                no_rule = f"{feature} > {threshold}"
+            else:  # 处理其他可能的操作符（根据实际情况调整）
+                no_rule = f"{feature} !{op} {threshold}"
+            
+            # 递归遍历yes分支
+            yes_path = path.copy()
+            yes_path.append(yes_rule)
+            dfs(node['yes'], yes_path, current_gain + node['gain'], current_cover + node['cover'])
+            
+            # 递归遍历no分支
+            no_path = path.copy()
+            no_path.append(no_rule)
+            dfs(node['no'], no_path, current_gain + node['gain'], current_cover + node['cover'])
         
         # 从根节点（通常为0）开始遍历
         dfs(0, [], 0.0, 0.0)
@@ -404,7 +421,7 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
 
     # 遍历每一条规则路径
     for idx, row in tqdm(rules_df.iterrows(), total=rules_df.shape[0], desc="Processing rules"):
-        # if row['yes_prob'] < 0.51 and row['yes_prob'] > 0.48:
+        # if row['yes_prob'] > 0.50:
         #     continue
         # 提取规则
         rules = [row[col] for col in rules_df.columns if 'rule_' in col and pd.notna(row[col]) and row[col] != '']
@@ -608,7 +625,9 @@ def compute_backtest_metrics(data, signals_df, output_metrics_csv='backtest_metr
     for rule, group in data_with_signals.groupby(['rule']):
         symbol_metrics = {}
         symbol_metrics['rule'] = rule[0]
-        symbol_metrics['direction'] = group['direction'].min()
+        direction = group['direction'].min()
+        symbol_metrics['direction'] = direction
+        group['future_return'] = group['future_return'] * direction
         symbol_metrics['avg_return'] = group['future_return'].mean()
         symbol_metrics['sharpe_ratio'] = group['future_return'].mean() / group['future_return'].std() if group['future_return'].std() != 0 else np.nan
         symbol_metrics['win_rate'] = (group['future_return'] > 0).mean()
@@ -696,7 +715,7 @@ if __name__ == "__main__":
     model = train_model(train_data)
 
     print("Backtesting strategy...")
-    compute_sharpe_by_rules(model, train_data, split_rules_csv, raw_rules_csv)
+    # compute_sharpe_by_rules(model, train_data, split_rules_csv, raw_rules_csv)
 
     print("生成交易信号...")
     signals_df = generate_signals(
