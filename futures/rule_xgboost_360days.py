@@ -404,8 +404,8 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
 
     # 遍历每一条规则路径
     for idx, row in tqdm(rules_df.iterrows(), total=rules_df.shape[0], desc="Processing rules"):
-        if row['yes_prob'] < 0.51 and row['yes_prob'] > 0.49:
-            continue
+        # if row['yes_prob'] < 0.51 and row['yes_prob'] > 0.48:
+        #     continue
         # 提取规则
         rules = [row[col] for col in rules_df.columns if 'rule_' in col and pd.notna(row[col]) and row[col] != '']
         if not rules:
@@ -457,6 +457,13 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
             std_return = group['future_return'].std()
             sharpe_ratio = avg_return / std_return if std_return != 0 else np.nan
             win_rate = (group['future_return'] > 0).mean()  # 计算胜率
+            
+            # 计算盈亏比
+            profitable_trades = group[group['future_return'] > 0]['future_return']
+            losing_trades = group[group['future_return'] < 0]['future_return']
+            avg_profit = profitable_trades.mean() if not profitable_trades.empty else 0
+            avg_loss = -losing_trades.mean() if not losing_trades.empty else 0
+            profit_loss_ratio = avg_profit / avg_loss if avg_loss != 0 else np.nan
 
             if np.isnan(sharpe_ratio):
                 continue  # 忽略夏普比率为 NaN 的情况
@@ -469,6 +476,7 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
                 'avg_return': avg_return,
                 'sharpe_ratio': sharpe_ratio,
                 'win_rate': win_rate,
+                'profit_loss_ratio': profit_loss_ratio,
                 'direction': direction
             })
         if current_results:
@@ -492,6 +500,7 @@ def fine_screen_rules(df):
     2. 去掉所有 avg_return 小于 0
     3. 去掉所有 min_return 小于 -0.2
     4. 去掉所有 sharpe_ratio 小于 1
+    5. 去掉所有 profit_loss_ratio 小于 2
     然后按照 sharpe_ratio 来排列规则
     :param df: 包含回测结果的DataFrame
     """
@@ -499,14 +508,16 @@ def fine_screen_rules(df):
         'avg_return': 'mean',
         'sharpe_ratio': 'mean',
         'win_rate': 'mean',
+        'profit_loss_ratio': 'min',
         'min_return': 'min'
     }).reset_index()
 
     # 筛选条件
-    df = df[df['win_rate'] >= 0]
+    df = df[df['win_rate'] >= 0.5]
     df = df[df['avg_return'] >= 0]
+    df = df[df['profit_loss_ratio'] >= 2]
     df = df[df['min_return'] >= -0.2]
-    df = df[df['sharpe_ratio'] >= 1]
+    df = df[df['sharpe_ratio'] >= 1.5]
     # 按照 sharpe_ratio 降序排列
     df = df.sort_values(by='sharpe_ratio', ascending=False)
 
@@ -602,6 +613,13 @@ def compute_backtest_metrics(data, signals_df, output_metrics_csv='backtest_metr
         symbol_metrics['sharpe_ratio'] = group['future_return'].mean() / group['future_return'].std() if group['future_return'].std() != 0 else np.nan
         symbol_metrics['win_rate'] = (group['future_return'] > 0).mean()
         symbol_metrics['min_return'] = group['future_return'].min()
+
+        # 计算盈亏比
+        profitable_trades = group[group['future_return'] > 0]['future_return']
+        losing_trades = group[group['future_return'] < 0]['future_return']
+        avg_profit = profitable_trades.mean() if not profitable_trades.empty else 0
+        avg_loss = -losing_trades.mean() if not losing_trades.empty else 0
+        symbol_metrics['profit_loss_ratio'] = avg_profit / avg_loss if avg_loss != 0 else np.nan
         metrics.append(symbol_metrics)
 
     if metrics:
@@ -662,7 +680,7 @@ if __name__ == "__main__":
     backtest_end_date = "2024-12-31"    # 回测结束日期
     target_day = 30
     num_symbols = 100  # 选择前100个品种
-    min_unique_signal_num = 5
+    min_unique_signal_num = 10
     excluded_columns = ['date', 'symbol', 'target', 'future_return', 'future_diff']
     non_normalize_columns = excluded_columns + ['return', 'rsi', 'skew_7', 'skew_30', 'kurt_7', 'kurt_30', 'turnover_rate']
 
