@@ -24,7 +24,7 @@ def get_futures_symbols():
         futures_list = pd.read_csv(file_path)
     else:
         futures_list = ak.futures_hist_table_em()
-        futures_list.to_csv(file_path, index=False)
+        futures_list.to_csv(file_path, encoding='utf-8-sig', index=False)
     return futures_list['合约中文代码'].unique().tolist()
 
 # 获取期货历史数据
@@ -43,7 +43,7 @@ def get_futures_data(symbol, raw_data_dir):
         '成交额': 'turnover',
         '持仓量': 'open_interest'
     }
-    if os.path.exists(file_path):
+    if os.path.exists(file_path) and mode != "update":
         try:
             df = pd.read_csv(file_path)
             df.rename(columns=column_mapping, inplace=True)
@@ -57,7 +57,7 @@ def get_futures_data(symbol, raw_data_dir):
             df.rename(columns=column_mapping, inplace=True)
             df['date'] = pd.to_datetime(df['date'])
             df['symbol'] = symbol
-            df.to_csv(file_path, index=False)
+            df.to_csv(file_path, encoding='utf-8-sig', index=False)
             return df
         except Exception as e:
             print(f"Error occurred while fetching data for symbol {symbol}: {e}")
@@ -67,33 +67,62 @@ def get_futures_data(symbol, raw_data_dir):
 def feature_engineering(df):
     # 基本价格特征
     df['return'] = df['close'].pct_change()  # 收益率
-    df['volatility'] = df['close'].rolling(window=5).std()  # 5 日波动率
     df['momentum'] = df['close'] / df['close'].shift(5) - 1  # 5 日动量
     df['ma_5'] = df['close'].rolling(window=5).mean()  # 5 日均线
     df['ma_10'] = df['close'].rolling(window=10).mean()  # 10 日均线
-    df['ma_20'] = df['close'].rolling(window=20).mean()  # 20 日均线
     df['ma_30'] = df['close'].rolling(window=30).mean()  # 30 日均线
-    df['ma_diff_5_10'] = df['ma_5'] - df['ma_10']  # 5 日与 10 日均线差
-    df['ma_diff_5_20'] = df['ma_5'] - df['ma_20']  # 5 日与 20 日均线差
-    df['ma_diff_5_30'] = df['ma_5'] - df['ma_30']  # 5 日与 30 日均线差
-    df['ma_diff_10_20'] = df['ma_10'] - df['ma_20']  # 10 日与 20 日均线差
+    df['ma_60'] = df['close'].rolling(window=60).mean()  # 60 日均线
+    df['ma_180'] = df['close'].rolling(window=180).mean()  # 180 日均线
+    df['ma_360'] = df['close'].rolling(window=360).mean()  # 360 日均线
     df['ma_diff_10_30'] = df['ma_10'] - df['ma_30']  # 10 日与 30 日均线差
-    df['ma_diff_20_30'] = df['ma_20'] - df['ma_30']  # 20 日与 30 日均线差
+    df['ma_diff_10_30'] = df['ma_10'] - df['ma_30']  # 10 日与 30 日均线差
+    df['ma_diff_10_60'] = df['ma_10'] - df['ma_60']  # 10 日与 60 日均线差
+    df['ma_diff_10_180'] = df['ma_10'] - df['ma_180']  # 10 日与 180 日均线差
+    df['ma_diff_10_360'] = df['ma_10'] - df['ma_360']  # 10 日与 360 日均线差
+    df['ma_diff_30_60'] = df['ma_30'] - df['ma_60']  # 30 日与 60 日均线差
+    df['ma_diff_30_180'] = df['ma_30'] - df['ma_180']  # 30 日与 180 日均线差
+    df['ma_diff_30_360'] = df['ma_30'] - df['ma_360']  # 30 日与 360 日均线差
+    df['ma_diff_60_180'] = df['ma_60'] - df['ma_180']  # 60 日与 180 日均线差
+    df['ma_diff_60_360'] = df['ma_60'] - df['ma_360']  # 60 日与 360 日均线差
+    df['ma_diff_180_360'] = df['ma_180'] - df['ma_360']  # 180 日与 360 日均线差
 
     # 不同时间窗口的价格统计特征
     df['max_7'] = df['close'].rolling(window=7).max()  # 7 日最高价
     df['min_7'] = df['close'].rolling(window=7).min()  # 7 日最低价
     df['max_30'] = df['close'].rolling(window=30).max()  # 30 日最高价
     df['min_30'] = df['close'].rolling(window=30).min()  # 30 日最低价
+    df['max_60'] = df['close'].rolling(window=60).max()  # 60 日最高价
+    df['min_60'] = df['close'].rolling(window=60).min()  # 60 日最低价
+    df['max_180'] = df['close'].rolling(window=180).max()  # 180 日最高价
+    df['min_180'] = df['close'].rolling(window=180).min()  # 180 日最低价
+    df['max_360'] = df['close'].rolling(window=360).max()  # 360 日最高价
+    df['min_360'] = df['close'].rolling(window=360).min()  # 360 日最低价
+
     df['range_7'] = df['max_7'] - df['min_7']  # 7 日价格范围
     df['range_30'] = df['max_30'] - df['min_30']  # 30 日价格范围
+    df['range_60'] = df['max_60'] - df['min_60']  # 60 日价格范围
+    df['range_180'] = df['max_180'] - df['min_180']  # 180 日价格范围
+    df['range_360'] = df['max_360'] - df['min_360']  # 360 日价格范围
 
     # 量价特征
     df['volume_return'] = df['volume'].pct_change()  # 成交量收益率
     df['price_volume_ratio'] = df['close'] / df['volume']  # 价量比
-    df['volume_ma_5'] = df['volume'].rolling(window=5).mean()  # 5 日成交量均线
     df['volume_ma_10'] = df['volume'].rolling(window=10).mean()  # 10 日成交量均线
-    df['volume_ma_diff_5_10'] = df['volume_ma_5'] - df['volume_ma_10']  # 5 日与 10 日成交量均线差
+    df['volume_ma_30'] = df['volume'].rolling(window=30).mean()  # 30 日成交量均线
+    df['volume_ma_60'] = df['volume'].rolling(window=60).mean()  # 60 日成交量均线
+    df['volume_ma_180'] = df['volume'].rolling(window=180).mean()  # 180 日成交量均线
+    df['volume_ma_360'] = df['volume'].rolling(window=360).mean()  # 360 日成交量均线
+
+    df['volume_ma_diff_10_30'] = df['volume_ma_10'] - df['volume_ma_30']  # 10 日与 30 日成交量均线差
+    df['volume_ma_diff_10_60'] = df['volume_ma_10'] - df['volume_ma_60']  # 10 日与 60 日成交量均线差
+    df['volume_ma_diff_10_180'] = df['volume_ma_10'] - df['volume_ma_180']  # 10 日与 180 日成交量均线差
+    df['volume_ma_diff_10_360'] = df['volume_ma_10'] - df['volume_ma_360']  # 10 日与 360 日成交量均线差
+    df['volume_ma_diff_30_60'] = df['volume_ma_30'] - df['volume_ma_60']  # 30 日与 60 日成交量均线差
+    df['volume_ma_diff_30_180'] = df['volume_ma_30'] - df['volume_ma_180']  # 30 日与 180 日成交量均线差
+    df['volume_ma_diff_30_360'] = df['volume_ma_30'] - df['volume_ma_360']  # 30 日与 360 日成交量均线差
+    df['volume_ma_diff_60_180'] = df['volume_ma_60'] - df['volume_ma_180']  # 60 日与 180 日成交量均线差
+    df['volume_ma_diff_60_360'] = df['volume_ma_60'] - df['volume_ma_360']  # 60 日与 360 日成交量均线差
+    df['volume_ma_diff_180_360'] = df['volume_ma_180'] - df['volume_ma_360']  # 180 日与 360 日成交量均线差
 
     # 相对强弱指标（RSI）
     delta = df['close'].diff()
@@ -107,24 +136,27 @@ def feature_engineering(df):
     # 偏度因子
     df['skew_7'] = df['close'].rolling(window=7).skew()
     df['skew_30'] = df['close'].rolling(window=30).skew()
+    df['skew_60'] = df['close'].rolling(window=60).skew()
+    df['skew_180'] = df['close'].rolling(window=180).skew()
+    df['skew_360'] = df['close'].rolling(window=360).skew()
 
     # 峰度因子
     df['kurt_7'] = df['close'].rolling(window=7).kurt()
     df['kurt_30'] = df['close'].rolling(window=30).kurt()
+    df['kurt_60'] = df['close'].rolling(window=60).kurt()
+    df['kurt_180'] = df['close'].rolling(window=180).kurt()
+    df['kurt_360'] = df['close'].rolling(window=360).kurt()
 
     # 波动因子
     df['volatility_10'] = df['close'].rolling(window=10).std()
-    df['volatility_20'] = df['close'].rolling(window=20).std()
     df['volatility_30'] = df['close'].rolling(window=30).std()
-    df['volatility_ratio_5_10'] = df['volatility'] / df['volatility_10']
-    df['volatility_ratio_5_20'] = df['volatility'] / df['volatility_20']
-    df['volatility_ratio_5_30'] = df['volatility'] / df['volatility_30']
+    df['volatility_60'] = df['close'].rolling(window=60).std()
+    df['volatility_180'] = df['close'].rolling(window=180).std()
+    df['volatility_360'] = df['close'].rolling(window=360).std()
 
     # 流动性因子
     df['turnover_rate'] = df['volume'] / (df['open_interest'] if 'open_interest' in df.columns else 1)
-    df['liquidity_5'] = df['turnover_rate'].rolling(window=5).mean()
     df['liquidity_10'] = df['turnover_rate'].rolling(window=10).mean()
-    df['liquidity_20'] = df['turnover_rate'].rolling(window=20).mean()
     df['liquidity_30'] = df['turnover_rate'].rolling(window=30).mean()
 
     # 均价突破因子
@@ -140,15 +172,12 @@ def feature_engineering(df):
 
     # 资金流向因子
     df['money_flow'] = df['volume'] * df['close']
-    df['money_flow_ma_5'] = df['money_flow'].rolling(window=5).mean()
     df['money_flow_ma_10'] = df['money_flow'].rolling(window=10).mean()
-    df['money_flow_ma_20'] = df['money_flow'].rolling(window=20).mean()
     df['money_flow_ma_30'] = df['money_flow'].rolling(window=30).mean()
 
     # 乖离率因子
     df['bias_5'] = (df['close'] - df['ma_5']) / df['ma_5']
     df['bias_10'] = (df['close'] - df['ma_10']) / df['ma_10']
-    df['bias_20'] = (df['close'] - df['ma_20']) / df['ma_20']
     df['bias_30'] = (df['close'] - df['ma_30']) / df['ma_30']
 
     # 二分类目标，涨为 1，跌为 0
@@ -159,13 +188,19 @@ def feature_engineering(df):
     df['future_return'] = df['future_diff'] / df['close']
 
     # 去除包含缺失值的行
-    df = df.replace([np.inf, -np.inf], np.nan).dropna()
+    df = df.replace([np.inf, -np.inf], np.nan)
+    # df = df.replace([np.inf, -np.inf], np.nan).dropna()
 
     # 归一化处理
     columns_to_normalize = [col for col in df.columns if col not in non_normalize_columns]
+    # 过滤掉全 NaN 的列
+    valid_columns = []
+    for col in columns_to_normalize:
+        if not df[col].isna().all():
+            valid_columns.append(col)
     scaler = MinMaxScaler()
-    if len(df) > 0:
-        df.loc[:, columns_to_normalize] = scaler.fit_transform(df[columns_to_normalize])
+    if len(df) > 0 and len(valid_columns) > 0:
+        df.loc[:, valid_columns] = scaler.fit_transform(df[valid_columns])
     return df
 
 def train_model(df):
@@ -174,18 +209,25 @@ def train_model(df):
         print("Loading existing model...")
         model = joblib.load(model_path)
     else:
-        X = df[features]
-        y = df['target']
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # 按照日期排序
+        df = df.sort_values(by='date')
+        # 计算分割点
+        split_index = int(len(df) * 0.9)
+        # 分割训练集和验证集
+        X_train = df.iloc[:split_index][features]
+        y_train = df.iloc[:split_index]['target']
+        X_test = df.iloc[split_index:][features]
+        y_test = df.iloc[split_index:]['target']
+
         # 将 eval_metric 参数移到初始化中
         model = XGBClassifier(
-            n_estimators=2000, 
-            max_depth=5, 
-            learning_rate=0.05, 
-            random_state=42, 
-            eval_metric="error", 
-            colsample_bytree=0.8, 
-            colsample_bylevel=0.8, 
+            n_estimators=2000,
+            max_depth=5,
+            learning_rate=0.05,
+            random_state=42,
+            eval_metric="error",
+            colsample_bytree=0.6,
+            colsample_bylevel=0.6,
             gamma=0.1,
             early_stopping_rounds=200
         )
@@ -318,13 +360,30 @@ def export_split_rules_to_csv(model, feature_names, output_path='leaf_rules.csv'
                 })
                 return
             
-            # 添加当前分裂规则
-            new_rule = f"{node['feature']} {node['op']} {node['threshold']}"
-            new_path = path + [new_rule]
+            # 处理分裂节点，生成不同分支的条件
+            feature = node['feature']
+            threshold = node['threshold']
+            op = node['op']
             
-            # 递归遍历分支
-            dfs(node['yes'], new_path, current_gain + node['gain'], current_cover + node['cover'])
-            dfs(node['no'], new_path, current_gain + node['gain'], current_cover + node['cover'])
+            # 生成yes分支条件（原条件）
+            yes_rule = f"{feature} {op} {threshold}"
+            # 生成no分支条件（取反）
+            if op == '<':
+                no_rule = f"{feature} >= {threshold}"
+            elif op == '<=':
+                no_rule = f"{feature} > {threshold}"
+            else:  # 处理其他可能的操作符（根据实际情况调整）
+                no_rule = f"{feature} !{op} {threshold}"
+            
+            # 递归遍历yes分支
+            yes_path = path.copy()
+            yes_path.append(yes_rule)
+            dfs(node['yes'], yes_path, current_gain + node['gain'], current_cover + node['cover'])
+            
+            # 递归遍历no分支
+            no_path = path.copy()
+            no_path.append(no_rule)
+            dfs(node['no'], no_path, current_gain + node['gain'], current_cover + node['cover'])
         
         # 从根节点（通常为0）开始遍历
         dfs(0, [], 0.0, 0.0)
@@ -347,7 +406,7 @@ def export_split_rules_to_csv(model, feature_names, output_path='leaf_rules.csv'
     if data:
         df = pd.DataFrame(data).fillna('')
         df = df.sort_values('total_gain', ascending=False)
-        df.to_csv(output_path, index=False)
+        df.to_csv(output_path, encoding='utf-8-sig', index=False)
         print(f"规则已保存至 {output_path}")
     else:
         print("未导出任何规则。")
@@ -369,8 +428,8 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
 
     # 遍历每一条规则路径
     for idx, row in tqdm(rules_df.iterrows(), total=rules_df.shape[0], desc="Processing rules"):
-        if row['yes_prob'] < 0.52 and row['yes_prob'] > 0.48:
-            continue
+        # if row['yes_prob'] > 0.50:
+        #     continue
         # 提取规则
         rules = [row[col] for col in rules_df.columns if 'rule_' in col and pd.notna(row[col]) and row[col] != '']
         if not rules:
@@ -413,6 +472,7 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
         for symbol, group in grouped:
             if group.empty:
                 continue
+
             direction = 1 if row['yes_prob'] > 0.5 else -1
             group['future_return'] = group['future_return'] * direction
             max_return = group['future_return'].max()
@@ -420,7 +480,14 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
             avg_return = group['future_return'].mean()
             std_return = group['future_return'].std()
             sharpe_ratio = avg_return / std_return if std_return != 0 else np.nan
-            win_rate = (group['future_return'] > 0).mean()  # 计算胜率
+            win_rate = (group['future_return'].dropna() > 0).mean()  # 计算胜率
+            
+            # 计算盈亏比
+            profitable_trades = group[group['future_return'] > 0]['future_return']
+            losing_trades = group[group['future_return'] < 0]['future_return']
+            avg_profit = profitable_trades.mean() if not profitable_trades.empty else 0
+            avg_loss = -losing_trades.mean() if not losing_trades.empty else 0
+            profit_loss_ratio = avg_profit / avg_loss if avg_loss != 0 else np.nan
 
             if np.isnan(sharpe_ratio):
                 continue  # 忽略夏普比率为 NaN 的情况
@@ -432,7 +499,9 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
                 'min_return': min_return,
                 'avg_return': avg_return,
                 'sharpe_ratio': sharpe_ratio,
-                'win_rate': win_rate
+                'win_rate': win_rate,
+                'profit_loss_ratio': profit_loss_ratio,
+                'direction': direction
             })
         if current_results:
             current_df = pd.DataFrame(current_results)
@@ -443,48 +512,48 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
         return
 
     results_df = pd.concat(all_results, ignore_index=True)
-    results_df.to_csv(output_csv, index=False)
+    results_df.to_csv(output_csv, encoding='utf-8-sig', index=False)
     print(f"规则粗筛与回测结果已保存至 {output_csv}")
 
     fine_screen_rules(results_df)  # 调用细筛函数
 
-def fine_screen_rules(df, output_csv='fine_rules.csv'):
+def fine_screen_rules(df):
     """
     细筛规则函数，根据以下条件筛选规则：
     1. 去掉所有 win_rate < 0
     2. 去掉所有 avg_return 小于 0
     3. 去掉所有 min_return 小于 -0.2
     4. 去掉所有 sharpe_ratio 小于 1
+    5. 去掉所有 profit_loss_ratio 小于 2
     然后按照 sharpe_ratio 来排列规则
     :param df: 包含回测结果的DataFrame
-    :param output_csv: 细筛后规则的输出CSV路径
     """
-    df = df.groupby('rule').agg({
+    df = df.groupby(['rule', 'direction']).agg({
         'avg_return': 'mean',
         'sharpe_ratio': 'mean',
         'win_rate': 'mean',
+        'profit_loss_ratio': 'min',
         'min_return': 'min'
     }).reset_index()
 
     # 筛选条件
-    df = df[df['win_rate'] >= 0]
+    df = df[df['win_rate'] >= 0.5]
     df = df[df['avg_return'] >= 0]
+    df = df[df['profit_loss_ratio'] >= 2]
     df = df[df['min_return'] >= -0.2]
-    df = df[df['sharpe_ratio'] >= 1]
+    df = df[df['sharpe_ratio'] >= 1.5]
     # 按照 sharpe_ratio 降序排列
     df = df.sort_values(by='sharpe_ratio', ascending=False)
 
-    df.to_csv(output_csv, index=False)
-    print(f"规则细筛结果已保存至 {output_csv}")
+    df.to_csv(fine_rules_csv, encoding='utf-8-sig', index=False)
+    print(f"规则细筛结果已保存至 {fine_rules_csv}")
 
 # 生成交易信号
-def generate_signals(data, fine_rules_csv, backtest_start_date, backtest_end_date, output_csv='signals.csv'):
+def generate_signals(data, fine_rules_csv, output_csv='signals.csv'):
     """
     根据细筛后的规则在验证集上生成交易信号
     :param data: 包含特征和target的DataFrame
     :param fine_rules_csv: 细筛后的规则CSV文件路径
-    :param backtest_start_date: 回测开始日期
-    :param backtest_end_date: 回测结束日期
     :param output_csv: 输出信号CSV文件路径
     """
     # 读取细筛后的规则
@@ -493,16 +562,13 @@ def generate_signals(data, fine_rules_csv, backtest_start_date, backtest_end_dat
     # 初始化信号列表
     signals = []
     
-    # 筛选回测时间范围内的数据
-    backtest_data = data[(data['date'] >= pd.Timestamp(backtest_start_date)) & (data['date'] <= pd.Timestamp(backtest_end_date))]
-    
     # 遍历每条规则
     for idx, rule in rules_df.iterrows():
         # 提取规则
         rules = rule['rule'].split(' AND ')
         
         # 构建布尔遮罩
-        mask = pd.Series(True, index=backtest_data.index)
+        mask = pd.Series(True, index=data.index)
         for condition in rules:
             # 解析条件，假设条件格式为 "feature operator threshold"
             match = re.match(r'(\w+)\s*([<>]=?)\s*([\d\.eE+-]+)', condition.strip())
@@ -510,28 +576,30 @@ def generate_signals(data, fine_rules_csv, backtest_start_date, backtest_end_dat
                 feature, operator, threshold = match.groups()
                 threshold = float(threshold)
                 if operator == '>=':
-                    mask &= (backtest_data[feature] >= threshold)
+                    mask &= (data[feature] >= threshold)
                 elif operator == '>':
-                    mask &= (backtest_data[feature] > threshold)
+                    mask &= (data[feature] > threshold)
                 elif operator == '<=':
-                    mask &= (backtest_data[feature] <= threshold)
+                    mask &= (data[feature] <= threshold)
                 elif operator == '<':
-                    mask &= (backtest_data[feature] < threshold)
+                    mask &= (data[feature] < threshold)
                 elif operator == '==':
-                    mask &= (backtest_data[feature] == threshold)
+                    mask &= (data[feature] == threshold)
         
         # 获取满足条件的信号
-        signal_data = backtest_data[mask].copy()
+        signal_data = data[mask].copy()
+        if len(np.unique([s[:2] for s in signal_data['symbol'].tolist()])) < min_unique_signal_num:continue
+
         signal_data['rule'] = rule['rule']
         signal_data['symbol'] = signal_data['symbol']
         signal_data['date'] = signal_data['date']
         
         # 决定交易方向，依据yes_prob
-        # 假设yes_prob > 0.5时开多（买入），否则开空（卖出）
-        signal_data['direction'] = np.where(rule['sharpe_ratio'] > 0, 'long', 'short')  # 示例逻辑，具体依据可调整
+        # 假设yes_prob > 0.5时开多（买入），否则开空（卖出)
+        signal_data['direction'] = rule['direction']  # 示例逻辑，具体依据可调整
         
         # 选择所需字段
-        signal = signal_data[['rule', 'symbol', 'direction', 'date']]
+        signal = signal_data[['rule', 'symbol', 'direction', 'date', 'future_return']]
         signals.append(signal)
     
     if signals:
@@ -539,7 +607,7 @@ def generate_signals(data, fine_rules_csv, backtest_start_date, backtest_end_dat
         # 排序
         signals_df = signals_df.sort_values(by=['date', 'symbol']).reset_index(drop=True)
         # 保存信号到CSV
-        signals_df.to_csv(output_csv, index=False)
+        signals_df.to_csv(output_csv, encoding='utf-8-sig', index=False)
         print(f"交易信号已保存至 {output_csv}")
     else:
         print("未生成任何交易信号。")
@@ -555,27 +623,38 @@ def compute_backtest_metrics(data, signals_df, output_metrics_csv='backtest_metr
     :param output_metrics_csv: 输出的性能指标CSV文件路径
     """
     # 合并信号与数据
-    data_with_signals = pd.merge(data, signals_df, on=['symbol', 'date'], how='inner')
+    data_with_signals = pd.merge(data, signals_df, on=['symbol', 'date', 'future_return'], how='inner')
     
     # 初始化结果列表
     metrics = []
     
     # 遍历每个规则
-    for rule, group in data_with_signals.groupby('rule'):
+    for rule, group in data_with_signals.groupby(['rule']):
         symbol_metrics = {}
-        symbol_metrics['rule'] = rule
+        symbol_metrics['rule'] = rule[0]
+        direction = group['direction'].min()
+        symbol_metrics['direction'] = direction
+        group['future_return'] = group['future_return'] * direction
         symbol_metrics['avg_return'] = group['future_return'].mean()
         symbol_metrics['sharpe_ratio'] = group['future_return'].mean() / group['future_return'].std() if group['future_return'].std() != 0 else np.nan
         symbol_metrics['win_rate'] = (group['future_return'] > 0).mean()
         symbol_metrics['min_return'] = group['future_return'].min()
+
+        # 计算盈亏比
+        profitable_trades = group[group['future_return'] > 0]['future_return']
+        losing_trades = group[group['future_return'] < 0]['future_return']
+        avg_profit = profitable_trades.mean() if not profitable_trades.empty else 0
+        avg_loss = -losing_trades.mean() if not losing_trades.empty else 0
+        symbol_metrics['profit_loss_ratio'] = avg_profit / avg_loss if avg_loss != 0 else np.nan
         metrics.append(symbol_metrics)
-    
+
     if metrics:
         metrics_df = pd.DataFrame(metrics)
         # 按照sharpe_ratio降序排列
+        metrics_df = metrics_df[metrics_df['sharpe_ratio'] >= 1.5]
         metrics_df = metrics_df.sort_values(by='sharpe_ratio', ascending=False).reset_index(drop=True)
         # 保存指标到CSV
-        metrics_df.to_csv(output_metrics_csv, index=False)
+        metrics_df.to_csv(output_metrics_csv, encoding='utf-8-sig', index=False)
         print(f"回测性能指标已保存至 {output_metrics_csv}")
     else:
         print("未计算到任何回测性能指标。")
@@ -585,7 +664,7 @@ def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date
     os.makedirs(feature_data_dir, exist_ok=True)
     combined_path = os.path.join(feature_data_dir, "combined_data.csv")
 
-    if os.path.exists(combined_path):
+    if os.path.exists(combined_path) and mode != 'update':
         print("发现已合并数据，直接加载...")
         combined_data = pd.read_csv(combined_path)
         combined_data['date'] = pd.to_datetime(combined_data['date'])
@@ -600,7 +679,7 @@ def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date
                 all_data.append(data)
         combined_data = pd.concat(all_data, ignore_index=True)
         # 根据时间范围筛选数据
-        combined_data.to_csv(combined_path, index=False)
+        combined_data.to_csv(combined_path, encoding='utf-8-sig', index=False)
 
     print(f"总数据量: {len(combined_data):,} 行")
     print(f"覆盖品种: {combined_data['symbol'].nunique()} 个")
@@ -616,18 +695,19 @@ if __name__ == "__main__":
     feature_importance_dir = './result/feature_importance/'
     split_rules_csv = './result/split_rules.csv'
     raw_rules_csv = './result/raw_rules.csv'
-    sharpe_by_rules_csv = './result/sharpe_by_rules.csv'
     fine_rules_csv = './result/fine_rules.csv'
     signals_csv = './result/signals.csv'
     backtest_metrics_csv = './result/backtest_metrics.csv'
     
     # Configuration
+    mode = "update"
     start_date = "2020-01-01"
-    end_date = "2023-12-31"
-    backtest_start_date = "2024-01-01"  # 回测开始日期
-    backtest_end_date = "2024-12-31"    # 回测结束日期
+    end_date = "2024-06-30"
+    backtest_start_date = "2024-07-01"  # 回测开始日期
+    backtest_end_date = "2025-03-20"    # 回测结束日期
     target_day = 30
     num_symbols = 100  # 选择前100个品种
+    min_unique_signal_num = 10
     excluded_columns = ['date', 'symbol', 'target', 'future_return', 'future_diff']
     non_normalize_columns = excluded_columns + ['return', 'rsi', 'skew_7', 'skew_30', 'kurt_7', 'kurt_30', 'turnover_rate']
 
@@ -644,17 +724,11 @@ if __name__ == "__main__":
 
     print("Backtesting strategy...")
     compute_sharpe_by_rules(model, train_data, split_rules_csv, raw_rules_csv)
-    
-    print("细筛规则...")
-    fine_screen_rules_df = pd.read_csv(sharpe_by_rules_csv)
-    fine_screen_rules(fine_screen_rules_df, fine_rules_csv)
 
     print("生成交易信号...")
     signals_df = generate_signals(
         data=test_data,
         fine_rules_csv=fine_rules_csv,
-        backtest_start_date=backtest_start_date,
-        backtest_end_date=backtest_end_date,
         output_csv=signals_csv
     )
 

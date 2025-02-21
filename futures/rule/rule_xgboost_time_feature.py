@@ -13,6 +13,11 @@ from tqdm import tqdm
 import re
 import heapq
 from collections import defaultdict
+from numba import jit
+from concurrent.futures import ProcessPoolExecutor
+
+from warnings import simplefilter
+simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
 # 配置全局参数
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
@@ -65,6 +70,7 @@ def get_futures_data(symbol, raw_data_dir):
 
 # 特征工程
 def feature_engineering(df):
+
     # 基本价格特征
     df['return'] = df['close'].pct_change()  # 收益率
     df['momentum'] = df['close'] / df['close'].shift(5) - 1  # 5 日动量
@@ -180,6 +186,46 @@ def feature_engineering(df):
     df['bias_10'] = (df['close'] - df['ma_10']) / df['ma_10']
     df['bias_30'] = (df['close'] - df['ma_30']) / df['ma_30']
 
+    # ========== 时间特征 ==========
+    # 基础时间特征
+    df['month'] = df['date'].dt.month
+    df['quarter'] = df['date'].dt.quarter
+    df['day_of_week'] = df['date'].dt.dayofweek
+    df['day_of_month'] = df['date'].dt.day
+    df['day_of_year'] = df['date'].dt.dayofyear
+    df['week_of_year'] = df['date'].dt.isocalendar().week.astype(int)
+    
+    # 周期性编码
+    df['week_sin'] = np.sin(2 * np.pi * df['week_of_year'] / 52)
+    df['week_cos'] = np.cos(2 * np.pi * df['week_of_year'] / 52)
+    df['quarter_sin'] = np.sin(2 * np.pi * df['quarter'] / 4)
+    df['quarter_cos'] = np.cos(2 * np.pi * df['quarter'] / 4)
+    df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+    df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+    df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+    df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+    df['day_of_year_sin'] = np.sin(2 * np.pi * df['day_of_year'] / 365)
+    df['day_of_year_cos'] = np.cos(2 * np.pi * df['day_of_year'] / 365)
+    df['month_week_sin'] = np.sin(2*np.pi*(df['month']*4 + df['week_of_year']%4)/48)
+    df['month_week_cos'] = np.cos(2*np.pi*(df['month']*4 + df['week_of_year']%4)/48)
+    df['halfyear_sin'] = np.sin(2 * np.pi * (df['day_of_year'] % 182) / 182)
+    df['halfyear_cos'] = np.cos(2 * np.pi * (df['day_of_year'] % 182) / 182)
+
+    # 季节特征
+    season_mapping = {1:0,2:0,3:1,4:1,5:1,6:2,7:2,8:2,9:3,10:3,11:3,12:0}
+    df['season'] = df['month'].map(season_mapping)
+    season_phase_map = {1:0,2:1,3:2,4:0,5:1,6:2,7:0,8:1,9:2,10:0,11:1,12:2}
+    df['season_phase'] = df['month'].map(season_phase_map)
+
+    # 时间结构编码
+    df['month_progress'] = df['day_of_month'] / df['date'].dt.days_in_month
+    df['quarter_progress'] = (df['month']%3 + df['month_progress']) / 3
+    # 周期乘积特征
+    df['month_week_interact'] = df['month_sin'] * df['week_sin']
+    df['season_phase_cos'] = df['season_phase'] * df['month_cos']
+    # 周期差异特征
+    df['month_week_diff'] = df['month_sin'] - df['week_sin']
+
     # 二分类目标，涨为 1，跌为 0
     df['target'] = (df['close'].shift(-target_day) > df['close']).astype(int)
 
@@ -209,20 +255,27 @@ def train_model(df):
         print("Loading existing model...")
         model = joblib.load(model_path)
     else:
-        X = df[features]
-        y = df['target']
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        # 按照日期排序
+        df = df.sort_values(by='date')
+        # 计算分割点
+        split_index = int(len(df) * 0.98)
+        # 分割训练集和验证集
+        X_train = df.iloc[:split_index][features]
+        y_train = df.iloc[:split_index]['target']
+        X_test = df.iloc[split_index:][features]
+        y_test = df.iloc[split_index:]['target']
+
         # 将 eval_metric 参数移到初始化中
         model = XGBClassifier(
-            n_estimators=2000,
-            max_depth=5,
-            learning_rate=0.05,
+            n_estimators=5000,
+            max_depth=7,
+            learning_rate=0.01,
             random_state=42,
             eval_metric="error",
-            colsample_bytree=0.6,
-            colsample_bylevel=0.6,
+            colsample_bytree=0.8,
+            colsample_bylevel=0.8,
             gamma=0.1,
-            early_stopping_rounds=200
+            early_stopping_rounds=1000
         )
         # 定义验证集
         eval_set = [(X_test, y_test)]
@@ -442,7 +495,7 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
                 continue  # 阈值不是数值，跳过
 
             if operator == '>=':
-                mask &= (data[feature] >= threshold)
+                mask &= (data[feature] >= threshold) 
             elif operator == '>':
                 mask &= (data[feature] > threshold)
             elif operator == '<=':
@@ -473,7 +526,7 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
             avg_return = group['future_return'].mean()
             std_return = group['future_return'].std()
             sharpe_ratio = avg_return / std_return if std_return != 0 else np.nan
-            win_rate = (group['future_return'] > 0).mean()  # 计算胜率
+            win_rate = (group['future_return'].dropna() > 0).mean()  # 计算胜率
             
             # 计算盈亏比
             profitable_trades = group[group['future_return'] > 0]['future_return']
@@ -509,6 +562,154 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
     print(f"规则粗筛与回测结果已保存至 {output_csv}")
 
     fine_screen_rules(results_df)  # 调用细筛函数
+
+@jit(nopython=True)
+def numba_stats(returns):
+    if len(returns) == 0:
+        return (np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+    
+    pos_returns = returns[returns > 0]
+    neg_returns = returns[returns < 0]
+    
+    max_ret = np.max(returns)
+    min_ret = np.min(returns)
+    mean_ret = np.mean(returns)
+    std_ret = np.std(returns)
+    std_ret = max(std_ret, 1e-9)
+    win_rate = len(pos_returns) / len(returns) if len(returns) > 0 else 0.0
+    pl_ratio = (np.mean(pos_returns)/abs(np.mean(neg_returns)) 
+                if len(pos_returns)>0 and len(neg_returns)>0 else np.nan)
+    
+    return (max_ret, min_ret, mean_ret, std_ret, win_rate, pl_ratio)
+
+def prepare_data(data):
+    """数据预处理优化"""
+    # 类型转换
+    data = data.astype({c: 'float32' for c in data.select_dtypes('float64').columns})
+    data = data.astype({c: 'category' for c in ['symbol']})
+    
+    # 预计算必要字段
+    data['future_return_abs'] = data['future_return'].abs()
+    return data.reset_index(drop=True)
+
+def rule_parser(rules_df):
+    """预解析规则为可执行函数"""
+    parsed_rules = []
+    for _, row in rules_df.iterrows():
+        rules = []
+        for col in rules_df.columns:
+            if 'rule_' in col and pd.notna(row[col]):
+                parts = row[col].split()
+                if len(parts) == 3:
+                    feature, op, val = parts
+                    try:
+                        val = float(val)
+                        rules.append((feature, op, val))
+                    except:
+                        continue
+        if rules:
+            parsed_rules.append({
+                'rules': rules,
+                'direction': -1 if row['yes_prob'] < 0.5 else 1
+            })
+    return parsed_rules
+
+def process_rule_batch(rule_batch, data, features):
+    """处理规则批次"""
+    results = []
+    feature_cols = data[features].values.T  # 转置为(特征数, 样本数)
+    
+    for rule_set in rule_batch:
+        mask = np.ones(len(data), dtype=bool)
+        for feature, op, val in rule_set['rules']:
+            idx = features.index(feature)
+            col_data = feature_cols[idx]
+            
+            if op == '>=': mask &= (col_data >= val)
+            elif op == '>': mask &= (col_data > val)
+            elif op == '<=': mask &= (col_data <= val)
+            elif op == '<': mask &= (col_data < val)
+            elif op == '==': mask &= (col_data == val)
+        
+        if not mask.any():
+            continue
+            
+        filtered = data.iloc[mask]
+        direction = rule_set['direction']
+        
+        # 向量化计算
+        symbols = filtered.symbol.cat.codes.values
+        returns = filtered.future_return.values * direction
+        
+        # 使用numpy快速分组
+        unique_symbols = np.unique(symbols)
+        for symbol_code in unique_symbols:
+            symbol_mask = (symbols == symbol_code)
+            symbol_returns = returns[symbol_mask]
+            
+            stats = numba_stats(symbol_returns)
+            if np.isnan(stats[3]) or stats[3] < 1e-9:  # 处理零和极小值
+                continue
+
+            sharpe_ratio = stats[2] / stats[3]
+                
+            results.append({
+                'symbol': data.symbol.cat.categories[symbol_code],
+                'rule': ' AND '.join([f"{f}{op}{v}" for f,op,v in rule_set['rules']]),
+                'max_return': stats[0],
+                'min_return': stats[1],
+                'avg_return': stats[2],
+                'sharpe_ratio': stats[2]/stats[3],
+                'win_rate': stats[4],
+                'profit_loss_ratio': stats[5],
+                'direction': direction
+            })
+    
+    return results
+
+def compute_sharpe_optimized(model, data, split_rules_csv, output_csv='raw_rules.csv', workers=16):
+    """优化后的计算函数"""
+    # 数据预处理
+    data = prepare_data(data.copy())
+    features = [c for c in data.columns if c not in ['symbol', 'date', 'future_return']]
+    
+    # 规则预处理
+    rules_df = pd.read_csv(split_rules_csv)
+    parsed_rules = rule_parser(rules_df)
+    
+    # 并行处理配置
+    workers = workers or os.cpu_count()-1
+    chunk_size = max(len(parsed_rules)//(workers*4), 1)
+    
+    # 分批次处理
+    results = []
+    with ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = []
+        for i in range(0, len(parsed_rules), chunk_size):
+            batch = parsed_rules[i:i+chunk_size]
+            futures.append(
+                executor.submit(
+                    process_rule_batch,
+                    batch,
+                    data,
+                    features
+                )
+            )
+        
+        # 进度条监控
+        for future in tqdm(futures, desc="Processing rules"):
+            results.extend(future.result())
+    
+    # 保存结果
+    if results:
+        results_df = pd.DataFrame(results)
+        results_df.to_csv(output_csv, index=False)
+        fine_screen_rules(results_df)
+    else:
+        print("No valid results calculated.")
+    
+    return results_df
+
 
 def fine_screen_rules(df):
     """
@@ -657,17 +858,15 @@ def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date
     os.makedirs(feature_data_dir, exist_ok=True)
     combined_path = os.path.join(feature_data_dir, "combined_data.csv")
 
-    if os.path.exists(combined_path):
+    if os.path.exists(combined_path) and mode != 'update':
         print("发现已合并数据，直接加载...")
         combined_data = pd.read_csv(combined_path)
         combined_data['date'] = pd.to_datetime(combined_data['date'])
     else:
         all_data = []
         for symbol in tqdm(selected_symbols):
-            print(f"Fetching data for {symbol}...")
             data = get_futures_data(symbol, raw_data_dir)
             if data is not None:
-                print("Performing feature engineering...")
                 data = feature_engineering(data)
                 all_data.append(data)
         combined_data = pd.concat(all_data, ignore_index=True)
@@ -693,10 +892,11 @@ if __name__ == "__main__":
     backtest_metrics_csv = './result/backtest_metrics.csv'
     
     # Configuration
-    start_date = "2020-01-01"
-    end_date = "2023-12-31"
-    backtest_start_date = "2024-01-01"  # 回测开始日期
-    backtest_end_date = "2024-12-31"    # 回测结束日期
+    mode = "normal"
+    start_date = "1900-01-01"
+    end_date = "2024-06-30"
+    backtest_start_date = "2024-07-01"  # 回测开始日期
+    backtest_end_date = "2025-03-20"    # 回测结束日期
     target_day = 30
     num_symbols = 100  # 选择前100个品种
     min_unique_signal_num = 10
@@ -715,7 +915,7 @@ if __name__ == "__main__":
     model = train_model(train_data)
 
     print("Backtesting strategy...")
-    # compute_sharpe_by_rules(model, train_data, split_rules_csv, raw_rules_csv)
+    compute_sharpe_optimized(model, train_data, split_rules_csv, raw_rules_csv)
 
     print("生成交易信号...")
     signals_df = generate_signals(
