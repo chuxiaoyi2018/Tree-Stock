@@ -90,6 +90,7 @@ def calculate_sliding_window(test_data):
         weights = np.array([decay_factor ** i for i in range(len(x))][::-1])
         return (x * weights).sum()
 
+
     # 计算每个symbol的滑动窗口总和
     test_data['long_window_trigger_num'] = test_data.groupby('symbol')['long_trigger_num'].transform(
         lambda x: x.rolling(window_size, min_periods=1).sum())
@@ -178,7 +179,7 @@ if __name__ == "__main__":
     ].copy()
 
     # 加载规则
-    rules_df = pd.read_csv(rule_set_csv).iloc[[0,1,2,3]]
+    rules_df = pd.read_csv(rule_set_csv).iloc[[0,1,2,3,4]]
 
     # 应用规则到测试数据
     test_data = apply_rules_to_data(rules_df, test_data)

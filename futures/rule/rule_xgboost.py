@@ -700,12 +700,12 @@ if __name__ == "__main__":
     backtest_metrics_csv = './result/backtest_metrics.csv'
     
     # Configuration
-    mode = "update"
-    start_date = "2020-01-01"
-    end_date = "2024-06-30"
+    mode = "normal"
+    start_date = "1900-01-01"
+    end_date = "2023-12-30"
     backtest_start_date = "2024-07-01"  # 回测开始日期
     backtest_end_date = "2025-03-20"    # 回测结束日期
-    target_day = 30
+    target_day = 14
     num_symbols = 100  # 选择前100个品种
     min_unique_signal_num = 10
     excluded_columns = ['date', 'symbol', 'target', 'future_return', 'future_diff']

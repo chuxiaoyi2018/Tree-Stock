@@ -12,6 +12,7 @@ import joblib
 from tqdm import tqdm
 import re
 import heapq
+import argparse
 from collections import defaultdict
 from numba import jit
 from concurrent.futures import ProcessPoolExecutor
@@ -19,11 +20,12 @@ from concurrent.futures import ProcessPoolExecutor
 from warnings import simplefilter
 simplefilter(action="ignore", category=pd.errors.PerformanceWarning)
 
-# 配置全局参数
 pd.set_option('display.float_format', lambda x: '%.3f' % x)
 
 # 获取期货代码列表
 def get_futures_symbols():
+    os.makedirs(raw_data_dir, exist_ok=True)
+    
     file_path = os.path.join(raw_data_dir, 'futures_hist_table_em.csv')
     if os.path.exists(file_path):
         futures_list = pd.read_csv(file_path)
@@ -69,7 +71,7 @@ def get_futures_data(symbol, raw_data_dir):
             return None
 
 # 特征工程
-def feature_engineering(df):
+def feature_engineering(df, args):
 
     # 基本价格特征
     df['return'] = df['close'].pct_change()  # 收益率
@@ -187,44 +189,45 @@ def feature_engineering(df):
     df['bias_30'] = (df['close'] - df['ma_30']) / df['ma_30']
 
     # ========== 时间特征 ==========
-    # 基础时间特征
-    df['month'] = df['date'].dt.month
-    df['quarter'] = df['date'].dt.quarter
-    df['day_of_week'] = df['date'].dt.dayofweek
-    df['day_of_month'] = df['date'].dt.day
-    df['day_of_year'] = df['date'].dt.dayofyear
-    df['week_of_year'] = df['date'].dt.isocalendar().week.astype(int)
-    
-    # 周期性编码
-    df['week_sin'] = np.sin(2 * np.pi * df['week_of_year'] / 52)
-    df['week_cos'] = np.cos(2 * np.pi * df['week_of_year'] / 52)
-    df['quarter_sin'] = np.sin(2 * np.pi * df['quarter'] / 4)
-    df['quarter_cos'] = np.cos(2 * np.pi * df['quarter'] / 4)
-    df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
-    df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
-    df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
-    df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
-    df['day_of_year_sin'] = np.sin(2 * np.pi * df['day_of_year'] / 365)
-    df['day_of_year_cos'] = np.cos(2 * np.pi * df['day_of_year'] / 365)
-    df['month_week_sin'] = np.sin(2*np.pi*(df['month']*4 + df['week_of_year']%4)/48)
-    df['month_week_cos'] = np.cos(2*np.pi*(df['month']*4 + df['week_of_year']%4)/48)
-    df['halfyear_sin'] = np.sin(2 * np.pi * (df['day_of_year'] % 182) / 182)
-    df['halfyear_cos'] = np.cos(2 * np.pi * (df['day_of_year'] % 182) / 182)
+    if args.enable_time_feature:
+        # 基础时间特征
+        df['month'] = df['date'].dt.month
+        df['quarter'] = df['date'].dt.quarter
+        df['day_of_week'] = df['date'].dt.dayofweek
+        df['day_of_month'] = df['date'].dt.day
+        df['day_of_year'] = df['date'].dt.dayofyear
+        df['week_of_year'] = df['date'].dt.isocalendar().week.astype(int)
+        
+        # 周期性编码
+        df['week_sin'] = np.sin(2 * np.pi * df['week_of_year'] / 52)
+        df['week_cos'] = np.cos(2 * np.pi * df['week_of_year'] / 52)
+        df['quarter_sin'] = np.sin(2 * np.pi * df['quarter'] / 4)
+        df['quarter_cos'] = np.cos(2 * np.pi * df['quarter'] / 4)
+        df['month_sin'] = np.sin(2 * np.pi * df['month'] / 12)
+        df['month_cos'] = np.cos(2 * np.pi * df['month'] / 12)
+        df['day_of_week_sin'] = np.sin(2 * np.pi * df['day_of_week'] / 7)
+        df['day_of_week_cos'] = np.cos(2 * np.pi * df['day_of_week'] / 7)
+        df['day_of_year_sin'] = np.sin(2 * np.pi * df['day_of_year'] / 365)
+        df['day_of_year_cos'] = np.cos(2 * np.pi * df['day_of_year'] / 365)
+        df['month_week_sin'] = np.sin(2*np.pi*(df['month']*4 + df['week_of_year']%4)/48)
+        df['month_week_cos'] = np.cos(2*np.pi*(df['month']*4 + df['week_of_year']%4)/48)
+        df['halfyear_sin'] = np.sin(2 * np.pi * (df['day_of_year'] % 182) / 182)
+        df['halfyear_cos'] = np.cos(2 * np.pi * (df['day_of_year'] % 182) / 182)
 
-    # 季节特征
-    season_mapping = {1:0,2:0,3:1,4:1,5:1,6:2,7:2,8:2,9:3,10:3,11:3,12:0}
-    df['season'] = df['month'].map(season_mapping)
-    season_phase_map = {1:0,2:1,3:2,4:0,5:1,6:2,7:0,8:1,9:2,10:0,11:1,12:2}
-    df['season_phase'] = df['month'].map(season_phase_map)
+        # 季节特征
+        season_mapping = {1:0,2:0,3:1,4:1,5:1,6:2,7:2,8:2,9:3,10:3,11:3,12:0}
+        df['season'] = df['month'].map(season_mapping)
+        season_phase_map = {1:0,2:1,3:2,4:0,5:1,6:2,7:0,8:1,9:2,10:0,11:1,12:2}
+        df['season_phase'] = df['month'].map(season_phase_map)
 
-    # 时间结构编码
-    df['month_progress'] = df['day_of_month'] / df['date'].dt.days_in_month
-    df['quarter_progress'] = (df['month']%3 + df['month_progress']) / 3
-    # 周期乘积特征
-    df['month_week_interact'] = df['month_sin'] * df['week_sin']
-    df['season_phase_cos'] = df['season_phase'] * df['month_cos']
-    # 周期差异特征
-    df['month_week_diff'] = df['month_sin'] - df['week_sin']
+        # 时间结构编码
+        df['month_progress'] = df['day_of_month'] / df['date'].dt.days_in_month
+        df['quarter_progress'] = (df['month']%3 + df['month_progress']) / 3
+        # 周期乘积特征
+        df['month_week_interact'] = df['month_sin'] * df['week_sin']
+        df['season_phase_cos'] = df['season_phase'] * df['month_cos']
+        # 周期差异特征
+        df['month_week_diff'] = df['month_sin'] - df['week_sin']
 
     # 二分类目标，涨为 1，跌为 0
     df['target'] = (df['close'].shift(-target_day) > df['close']).astype(int)
@@ -258,7 +261,7 @@ def train_model(df):
         # 按照日期排序
         df = df.sort_values(by='date')
         # 计算分割点
-        split_index = int(len(df) * 0.98)
+        split_index = int(len(df) * 0.9)
         # 分割训练集和验证集
         X_train = df.iloc[:split_index][features]
         y_train = df.iloc[:split_index]['target']
@@ -268,7 +271,7 @@ def train_model(df):
         # 将 eval_metric 参数移到初始化中
         model = XGBClassifier(
             n_estimators=5000,
-            max_depth=7,
+            max_depth=5,
             learning_rate=0.01,
             random_state=42,
             eval_metric="error",
@@ -474,8 +477,6 @@ def compute_sharpe_by_rules(model, data, split_rules_csv, output_csv='raw_rules.
 
     # 遍历每一条规则路径
     for idx, row in tqdm(rules_df.iterrows(), total=rules_df.shape[0], desc="Processing rules"):
-        # if row['yes_prob'] > 0.50:
-        #     continue
         # 提取规则
         rules = [row[col] for col in rules_df.columns if 'rule_' in col and pd.notna(row[col]) and row[col] != '']
         if not rules:
@@ -618,6 +619,7 @@ def process_rule_batch(rule_batch, data, features):
     """处理规则批次"""
     results = []
     feature_cols = data[features].values.T  # 转置为(特征数, 样本数)
+    data['date'] = pd.to_datetime(data['date'])  # 确保日期为datetime类型
     
     for rule_set in rule_batch:
         mask = np.ones(len(data), dtype=bool)
@@ -634,36 +636,57 @@ def process_rule_batch(rule_batch, data, features):
         if not mask.any():
             continue
             
-        filtered = data.iloc[mask]
+        filtered = data.iloc[mask].copy()
         direction = rule_set['direction']
         
-        # 向量化计算
-        symbols = filtered.symbol.cat.codes.values
-        returns = filtered.future_return.values * direction
-        
-        # 使用numpy快速分组
-        unique_symbols = np.unique(symbols)
-        for symbol_code in unique_symbols:
-            symbol_mask = (symbols == symbol_code)
-            symbol_returns = returns[symbol_mask]
-            
-            stats = numba_stats(symbol_returns)
-            if np.isnan(stats[3]) or stats[3] < 1e-9:  # 处理零和极小值
+        # 计算每年的夏普和品种数
+        filtered['year'] = filtered['date'].dt.year
+        yearly_stats = []
+        for year, year_data in filtered.groupby('year'):
+            # 计算该年份的夏普比率
+            returns = year_data['future_return'] * direction
+            if len(returns) < 1:
                 continue
-
-            sharpe_ratio = stats[2] / stats[3]
-                
-            results.append({
-                'symbol': data.symbol.cat.categories[symbol_code],
-                'rule': ' AND '.join([f"{f}{op}{v}" for f,op,v in rule_set['rules']]),
-                'max_return': stats[0],
-                'min_return': stats[1],
-                'avg_return': stats[2],
-                'sharpe_ratio': stats[2]/stats[3],
-                'win_rate': stats[4],
-                'profit_loss_ratio': stats[5],
-                'direction': direction
+            avg_return = returns.mean()
+            std_return = returns.std() + 1e-8
+            sharpe = avg_return / std_return
+            
+            # 计算品种数量
+            num_symbols = year_data['symbol'].nunique()
+            
+            yearly_stats.append({
+                'year': year,
+                'sharpe': sharpe,
+                'num_symbols': num_symbols
             })
+        
+        # 如果没有满足条件的年份数据则跳过
+        if not yearly_stats:
+            continue
+        
+        # 转换为年度稳定性指标
+        sharpe_by_year = {s['year']: s['sharpe'] for s in yearly_stats}
+        symbols_by_year = {s['year']: s['num_symbols'] for s in yearly_stats}
+        
+        # 判断稳定性条件
+        sharpe_stable = sum(v >= 1.0 for v in sharpe_by_year.values())
+        symbol_stable = sum(v >= 10 for v in symbols_by_year.values())
+        
+        # 向量化计算整体指标
+        returns = filtered['future_return'].values * direction
+        stats = numba_stats(returns)  # 假设numba_stats返回必要的统计量
+        results.append({
+            'rule': ' AND '.join([f"{f}{op}{v}" for f, op, v in rule_set['rules']]),
+            'direction': direction,
+            'max_return': stats[0],
+            'min_return': stats[1],
+            'avg_return': stats[2],
+            'sharpe_ratio': stats[2]/(stats[3]+1e-8),
+            'win_rate': stats[4],
+            'profit_loss_ratio': stats[5],
+            'sharpe_stable': sharpe_stable,
+            'symbol_stable': symbol_stable
+        })
     
     return results
 
@@ -704,45 +727,34 @@ def compute_sharpe_optimized(model, data, split_rules_csv, output_csv='raw_rules
     if results:
         results_df = pd.DataFrame(results)
         results_df.to_csv(output_csv, index=False)
-        fine_screen_rules(results_df)
     else:
         print("No valid results calculated.")
     
-    return results_df
+    return results_df 
 
 
-def fine_screen_rules(df):
+def fine_screen_rules(raw_rule_csv='raw_rules.csv'):
     """
-    细筛规则函数，根据以下条件筛选规则：
-    1. 去掉所有 win_rate < 0
-    2. 去掉所有 avg_return 小于 0
-    3. 去掉所有 min_return 小于 -0.2
-    4. 去掉所有 sharpe_ratio 小于 1
-    5. 去掉所有 profit_loss_ratio 小于 2
-    然后按照 sharpe_ratio 来排列规则
-    :param df: 包含回测结果的DataFrame
+    细筛规则函数，新增条件：
+    6. 夏普平稳性（所有年份夏普≥1.0）
+    7. 品种平稳性（所有年份交易品种≥10）
     """
-    df = df.groupby(['rule', 'direction']).agg({
-        'avg_return': 'mean',
-        'sharpe_ratio': 'mean',
-        'win_rate': 'mean',
-        'profit_loss_ratio': 'min',
-        'min_return': 'min'
-    }).reset_index()
+    df = pd.read_csv(raw_rule_csv)
+    # 按规则和方向分组聚合
+    df = df.drop_duplicates(subset=['rule'], keep='first')
 
     # 筛选条件
-    df = df[df['win_rate'] >= 0.5]
-    df = df[df['avg_return'] >= 0]
-    df = df[df['profit_loss_ratio'] >= 2]
-    df = df[df['min_return'] >= -0.2]
-    df = df[df['sharpe_ratio'] >= 1.5]
-    # 按照 sharpe_ratio 降序排列
+    df = df[(df['win_rate'] >= 0.8) & (df['avg_return'] >= 0) & (df['profit_loss_ratio'] >= 2) & (df['min_return'] >= -0.2) & (df['sharpe_ratio'] >= 1.0) & (df['sharpe_stable'] > 2) & (df['symbol_stable'] > 2)]
+    
+    # 按照夏普比率降序排列
     df = df.sort_values(by='sharpe_ratio', ascending=False)
-
+    
     df.to_csv(fine_rules_csv, encoding='utf-8-sig', index=False)
     print(f"规则细筛结果已保存至 {fine_rules_csv}")
+    print(df)
 
 # 生成交易信号
+# 这一步做了min_unique_signal_num这个筛选
 def generate_signals(data, fine_rules_csv, output_csv='signals.csv'):
     """
     根据细筛后的规则在验证集上生成交易信号
@@ -782,7 +794,6 @@ def generate_signals(data, fine_rules_csv, output_csv='signals.csv'):
         
         # 获取满足条件的信号
         signal_data = data[mask].copy()
-        if len(np.unique([s[:2] for s in signal_data['symbol'].tolist()])) < min_unique_signal_num:continue
 
         signal_data['rule'] = rule['rule']
         signal_data['symbol'] = signal_data['symbol']
@@ -825,7 +836,7 @@ def compute_backtest_metrics(data, signals_df, output_metrics_csv='backtest_metr
     # 遍历每个规则
     for rule, group in data_with_signals.groupby(['rule']):
         symbol_metrics = {}
-        symbol_metrics['rule'] = rule[0]
+        symbol_metrics['rule'] = rule
         direction = group['direction'].min()
         symbol_metrics['direction'] = direction
         group['future_return'] = group['future_return'] * direction
@@ -845,16 +856,17 @@ def compute_backtest_metrics(data, signals_df, output_metrics_csv='backtest_metr
     if metrics:
         metrics_df = pd.DataFrame(metrics)
         # 按照sharpe_ratio降序排列
-        metrics_df = metrics_df[metrics_df['sharpe_ratio'] >= 1.5]
+        # metrics_df = metrics_df[metrics_df['sharpe_ratio'] >= 1.5]
         metrics_df = metrics_df.sort_values(by='sharpe_ratio', ascending=False).reset_index(drop=True)
         # 保存指标到CSV
         metrics_df.to_csv(output_metrics_csv, encoding='utf-8-sig', index=False)
         print(f"回测性能指标已保存至 {output_metrics_csv}")
     else:
         print("未计算到任何回测性能指标。")
+    print(metrics_df)
 
 # 封装获取多个期货品种数据并处理的函数
-def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date, raw_data_dir):
+def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date, raw_data_dir, args):
     os.makedirs(feature_data_dir, exist_ok=True)
     combined_path = os.path.join(feature_data_dir, "combined_data.csv")
 
@@ -867,7 +879,7 @@ def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date
         for symbol in tqdm(selected_symbols):
             data = get_futures_data(symbol, raw_data_dir)
             if data is not None:
-                data = feature_engineering(data)
+                data = feature_engineering(data, args)
                 all_data.append(data)
         combined_data = pd.concat(all_data, ignore_index=True)
         # 根据时间范围筛选数据
@@ -880,6 +892,10 @@ def get_and_process_multiple_futures_data(selected_symbols, start_date, end_date
 
 # 主程序
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--enable_time_feature', action='store_true', help='启用时间特征生成')
+    args = parser.parse_args()
+
     # Path
     raw_data_dir = "./data/raw_data"
     feature_data_dir = "./data/feature_data"
@@ -893,29 +909,32 @@ if __name__ == "__main__":
     
     # Configuration
     mode = "normal"
-    start_date = "1900-01-01"
-    end_date = "2024-06-30"
-    backtest_start_date = "2024-07-01"  # 回测开始日期
-    backtest_end_date = "2025-03-20"    # 回测结束日期
-    target_day = 30
+    start_date = "1990-01-01"
+    end_date = "2022-12-30"
+    backtest_start_date = "2023-01-01"  # 回测开始日期
+    backtest_end_date = "2024-12-31"    # 回测结束日期
+    target_day = 14
     num_symbols = 100  # 选择前100个品种
     min_unique_signal_num = 10
-    excluded_columns = ['date', 'symbol', 'target', 'future_return', 'future_diff']
+    excluded_columns = [
+        'date', 'symbol', 'target', 'future_return', 'future_diff']
     non_normalize_columns = excluded_columns + ['return', 'rsi', 'skew_7', 'skew_30', 'kurt_7', 'kurt_30', 'turnover_rate']
 
     # 配置参数
     symbols = get_futures_symbols()
     selected_symbols = symbols[:]
-    combined_data = get_and_process_multiple_futures_data(selected_symbols, start_date, end_date, raw_data_dir)
-    
+    combined_data = get_and_process_multiple_futures_data(selected_symbols, start_date, end_date, raw_data_dir, args)
     train_data = combined_data[(combined_data['date'] >= pd.Timestamp(start_date)) & (combined_data['date'] <= pd.Timestamp(end_date))]
     test_data = combined_data[(combined_data['date'] >= pd.Timestamp(backtest_start_date)) & (combined_data['date'] <= pd.Timestamp(backtest_end_date))]
 
     print("Training model...")
-    model = train_model(train_data)
+    # model = train_model(train_data)
 
     print("Backtesting strategy...")
-    compute_sharpe_optimized(model, train_data, split_rules_csv, raw_rules_csv)
+    # compute_sharpe_optimized(model, train_data, split_rules_csv, raw_rules_csv)
+
+
+    fine_screen_rules(raw_rules_csv)
 
     print("生成交易信号...")
     signals_df = generate_signals(
